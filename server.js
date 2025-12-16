@@ -263,4 +263,16 @@ app.get('/api/config', (req, res) => {
     });
 });
 
+// 获取所有站点信息（用于客户端测速）
+app.get('/api/sites', (req, res) => {
+    const sites = getDB().sites.filter(s => s.active);
+    res.json({
+        sites: sites.map(s => ({
+            key: s.key,
+            name: s.name,
+            api: s.api
+        }))
+    });
+});
+
 app.listen(PORT, () => { console.log(`服务已启动: http://localhost:${PORT}`); });
