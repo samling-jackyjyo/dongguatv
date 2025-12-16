@@ -77,9 +77,11 @@
     npm install
     ```
 2.  **配置环境**
-    复制 `.env.example` 为 `.env`，并填入您的 TMDb API Key：
+    复制 `.env.example` 为 `.env`，并配置如下信息：
     ```env
     TMDB_API_KEY=your_api_key_here
+    # 可选：自定义端口 (默认 3000)
+    PORT=3000
     ```
 3.  **启动服务**
     ```bash
