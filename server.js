@@ -4,12 +4,35 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const NodeCache = require('node-cache');
 
 const app = express();
 const PORT = 3000;
 const DATA_FILE = path.join(__dirname, 'db.json');
-const ADMIN_PASSWORD = "admin"; 
-const FORCE_UPDATE = true; 
+const CACHE_SEARCH_FILE = path.join(__dirname, 'cache_search.json');
+const CACHE_DETAIL_FILE = path.join(__dirname, 'cache_detail.json');
+const FORCE_UPDATE = true;  // 设为 true 时，启动时会合并 DEFAULT_SITES 中的新站点
+
+// ========== 永久文件缓存系统 ==========
+// 加载缓存
+const loadCache = (file) => {
+    try {
+        if (fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch (e) { console.error("Cache Load Error:", e); }
+    return {};
+};
+
+// 保存缓存
+const saveCache = (file, data) => {
+    try {
+        fs.writeFileSync(file, JSON.stringify(data), 'utf8');
+    } catch (e) { console.error("Cache Save Error:", e); }
+};
+
+// 初始化缓存
+let searchCache = loadCache(CACHE_SEARCH_FILE);
+let detailCache = loadCache(CACHE_DETAIL_FILE);
+console.log(`[Cache] 本地持久化缓存已加载 (搜索: ${Object.keys(searchCache).length}, 详情: ${Object.keys(detailCache).length})`);
 
 app.use(cors());
 app.use(bodyParser.json());
@@ -54,26 +77,26 @@ const DEFAULT_SITES = [
 if (!fs.existsSync(DATA_FILE) || FORCE_UPDATE) {
     // 只有在没有文件时，或者强制更新开启时，才重置配置
     // 但为了不覆盖你可能手动添加的，我们这里只在文件不存在时写入，或者你确认要重置
-    if(!fs.existsSync(DATA_FILE)) {
+    if (!fs.existsSync(DATA_FILE)) {
         fs.writeFileSync(DATA_FILE, JSON.stringify({ sites: DEFAULT_SITES }, null, 2));
     }
 }
 
-function getDB() { 
+function getDB() {
     try {
         const data = JSON.parse(fs.readFileSync(DATA_FILE));
         // 简单的合并逻辑：确保代码里的30多个接口都在数据库里
-        if(FORCE_UPDATE) {
+        if (FORCE_UPDATE) {
             const dbSites = data.sites || [];
             DEFAULT_SITES.forEach(defSite => {
-                if(!dbSites.find(s => s.key === defSite.key)) {
+                if (!dbSites.find(s => s.key === defSite.key)) {
                     dbSites.push(defSite);
                 }
             });
             return { sites: dbSites };
         }
         return data;
-    } catch(e) {
+    } catch (e) {
         return { sites: DEFAULT_SITES };
     }
 }
@@ -84,7 +107,7 @@ app.get('/api/check', async (req, res) => {
     const { key } = req.query;
     const sites = getDB().sites;
     const site = sites.find(s => s.key === key);
-    
+
     if (!site) return res.json({ latency: 9999 });
 
     const start = Date.now();
@@ -105,55 +128,132 @@ app.get('/api/hot', async (req, res) => {
         try {
             const response = await axios.get(`${site.api}?ac=list&pg=1&h=24&out=json`, { timeout: 3000 });
             const list = response.data.list || response.data.data;
-            if(list && list.length > 0) return res.json({ list: list.slice(0, 12) });
+            if (list && list.length > 0) return res.json({ list: list.slice(0, 12) });
         } catch (e) { continue; }
     }
     res.json({ list: [] });
 });
 
-// === 搜索接口 (为了速度，搜索阶段不测速) ===
+// === 搜索接口 (极速缓存版) ===
 app.get('/api/search', async (req, res) => {
     const { wd } = req.query;
     console.log(`[Search] ${wd}`);
     if (!wd) return res.json({ list: [] });
-    
+
+    // 尝试从缓存获取
+    const cacheKey = wd.toLowerCase();
+    const cachedItem = searchCache[cacheKey];
+    if (cachedItem) {
+        // 兼容旧格式 (直接是数组) 或 检查有效期
+        // 如果是对象且有 ttl，则检查是否过期; ttl=0 为永久
+        const isExpired = !Array.isArray(cachedItem) && cachedItem.ttl > 0 && (Date.now() - cachedItem.ts > cachedItem.ttl * 1000);
+
+        if (!isExpired) {
+            const list = Array.isArray(cachedItem) ? cachedItem : cachedItem.data;
+            console.log(`[Search] 缓存命中: ${wd} (${list.length} 条) ${cachedItem.ttl ? `(TTL: ${(cachedItem.ttl / 3600).toFixed(1)}h)` : '(永久)'}`);
+            return res.json({ list: list });
+        } else {
+            console.log(`[Search] 缓存过期: ${wd}, 重新获取...`);
+        }
+    }
+
     const sites = getDB().sites.filter(s => s.active);
-    
+    let allResults = [];
+    let responded = false;
+
+    // 提前返回的条件：有足够结果(>=15个) 或 超过1.5秒
+    const earlyReturnTimer = setTimeout(() => {
+        if (!responded && allResults.length > 0) {
+            responded = true;
+            console.log(`[Search] 提前返回 ${allResults.length} 条结果`);
+            res.json({ list: allResults });
+        }
+    }, 1500);
+
+    // 并发请求所有源
     const promises = sites.map(async (site) => {
         try {
-            const response = await axios.get(`${site.api}?ac=list&wd=${encodeURIComponent(wd)}&out=json`, { timeout: 6000 });
+            const response = await axios.get(`${site.api}?ac=list&wd=${encodeURIComponent(wd)}&out=json`, {
+                timeout: 2000
+            });
             const data = response.data;
             const list = data.list || data.data;
-            if (list && Array.isArray(list)) {
-                return list.map(item => ({
-                    ...item, 
-                    site_key: site.key, 
+            if (list && Array.isArray(list) && list.length > 0) {
+                const results = list.map(item => ({
+                    ...item,
+                    site_key: site.key,
                     site_name: site.name,
-                    // 这里先不测速，给个默认值，点击详情再测
-                    latency: 0 
+                    latency: 0
                 }));
+                allResults = allResults.concat(results);
+
+                if (!responded && allResults.length >= 15) {
+                    responded = true;
+                    clearTimeout(earlyReturnTimer);
+                    console.log(`[Search] 快速返回 ${allResults.length} 条结果`);
+                    res.json({ list: allResults });
+                }
             }
-        } catch (e) {}
-        return [];
+        } catch (e) { }
     });
-    
-    const results = await Promise.all(promises);
-    res.json({ list: results.flat() });
+
+    await Promise.allSettled(promises);
+
+    // 保存到缓存
+    if (allResults.length > 0) {
+        // 智能过期策略：
+        // 检查结果中是否有今年(或去年)的内容
+        const currentYear = new Date().getFullYear();
+        const hasNewContent = allResults.some(item => {
+            const y = parseInt(item.vod_year);
+            // 包含当年或去年的，或者是最近更新的(如果vod_year非数字)
+            return !isNaN(y) && y >= currentYear - 1;
+        });
+
+        // 如果有新内容，缓存 1 小时 (3600秒)，否则永久缓存 (TTL=0)
+        const ttl = hasNewContent ? 3600 : 0;
+
+        searchCache[cacheKey] = {
+            data: allResults,
+            ts: Date.now(),
+            ttl: ttl
+        };
+        saveCache(CACHE_SEARCH_FILE, searchCache);
+        console.log(`[Search] 已缓存: ${wd} (${allResults.length} 条) - 策略: ${ttl > 0 ? '热搜 (1h)' : '经典 (永久)'}`);
+    }
+
+    if (!responded) {
+        responded = true;
+        clearTimeout(earlyReturnTimer);
+        console.log(`[Search] 完整返回 ${allResults.length} 条结果`);
+        res.json({ list: allResults });
+    }
 });
 
-// === 详情接口 ===
+// === 详情接口 (带缓存) ===
 app.get('/api/detail', async (req, res) => {
     const { site_key, id } = req.query;
+
+    // 检查缓存
+    const cacheKey = `${site_key}_${id}`;
+    if (detailCache[cacheKey]) {
+        return res.json(detailCache[cacheKey]);
+    }
+
     const targetSite = getDB().sites.find(s => s.key === site_key);
     if (!targetSite) return res.status(404).json({ error: "Site not found" });
+
     try {
         const response = await axios.get(`${targetSite.api}?ac=detail&ids=${id}&out=json`, { timeout: 6000 });
-        res.json(response.data);
+        const data = response.data;
+
+        // 存入缓存
+        if (data && (data.list || data.data)) {
+            detailCache[cacheKey] = data;
+            saveCache(CACHE_DETAIL_FILE, detailCache);
+        }
+        res.json(data);
     } catch (e) { res.status(500).json({ error: "Source Error" }); }
 });
-
-app.post('/api/admin/login', (req, res) => req.body.password === ADMIN_PASSWORD ? res.json({ success: true }) : res.status(403).json({ success: false }));
-app.get('/api/admin/sites', (req, res) => res.json(getDB().sites));
-app.post('/api/admin/sites', (req, res) => { saveDB({sites: req.body.sites}); res.json({ success: true }); });
 
 app.listen(PORT, () => { console.log(`服务已启动: http://localhost:${PORT}`); });
