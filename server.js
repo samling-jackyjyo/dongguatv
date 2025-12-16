@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const bodyParser = require('body-parser');
@@ -254,6 +255,12 @@ app.get('/api/detail', async (req, res) => {
         }
         res.json(data);
     } catch (e) { res.status(500).json({ error: "Source Error" }); }
+});
+
+app.get('/api/config', (req, res) => {
+    res.json({
+        tmdb_api_key: process.env.TMDB_API_KEY || ''
+    });
 });
 
 app.listen(PORT, () => { console.log(`服务已启动: http://localhost:${PORT}`); });

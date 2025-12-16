@@ -1222,8 +1222,8 @@
 
     <script>
         const { createApp, reactive } = Vue;
-        // TMDb API 配置 (国外直连，无需反代)
-        const TMDB_API_KEY = "94e6b3d57df585b3597d0924ef52b092";
+        // TMDb API 配置 (从服务端获取)
+        let TMDB_API_KEY = "";
 
         // 官方 TMDb API 地址
         const TMDB_BASE_URL = "https://api.themoviedb.org/3";
@@ -1300,10 +1300,26 @@
                     ]
                 }
             },
-            mounted() {
+            async mounted() {
                 window.addEventListener('scroll', () => { this.scrollY = window.scrollY; });
-                this.fetchHero();
-                this.fetchAllLists();
+
+                // 1. 获取后端配置
+                try {
+                    const res = await fetch('/api/config');
+                    const config = await res.json();
+                    TMDB_API_KEY = config.tmdb_api_key;
+                } catch (e) {
+                    console.error('Config Load Error:', e);
+                }
+
+                // 2. 如果获取到了 Key，加载数据
+                if (TMDB_API_KEY) {
+                    this.fetchHero();
+                    this.fetchAllLists();
+                } else {
+                    console.warn('TMDB_API_KEY 未配置');
+                    // 可以在界面上显示一个提示
+                }
             },
             computed: {
                 groupedList() {

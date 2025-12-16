@@ -42,31 +42,110 @@
 *   **Data Sources**: TMDb API v3, Multiple JSON/XML CMS Interfaces.
 *   **Persistence**: Local JSON Cache.
 
-## 📦 安装与运行 (Installation)
+## � 前置准备：获取 TMDb API Key
+本项目依赖 **The Movie Database (TMDb)** 提供影视元数据。
 
+1.  注册账户：访问 [Create Account](https://www.themoviedb.org/signup) 注册并登录。
+2.  申请 API：访问 [API Settings](https://www.themoviedb.org/settings/api)，点击 **"Create"** 或 **"click here"** 申请。
+3.  填写信息：应用类型选择 **"Developer"**，简单填写用途（如 "Personal learning project"）。
+4.  获取 Key：申请通过后，复制 **"API Key (v3 auth)"** 备用。
+
+---
+
+## �📦 安装与运行 (Installation)
+
+### 本地运行
 1.  **安装依赖**
     ```bash
     npm install
     ```
-
 2.  **配置环境**
-    在 `server.js` 中配置您的 API Key 和资源站地址（已内置默认配置）。
-
+    复制 `.env.example` 为 `.env`，并填入您的 TMDb API Key：
+    ```env
+    TMDB_API_KEY=your_api_key_here
+    ```
 3.  **启动服务**
     ```bash
     node server.js
     ```
-    或者是使用 Nodemon（开发模式）：
+4.  **访问**：打开浏览器访问 `http://localhost:3000`
+
+---
+
+## 🚀 部署 (Deployment)
+
+### 🐳 Docker 部署 (推荐)
+Docker 部署支持完整的本地缓存功能，性能最佳。
+
+```bash
+# 1. 构建镜像
+docker build -t donggua-tv .
+
+# 2. 启动容器 (后台运行)，需传入 API Key
+docker run -d -p 3000:3000 \
+  -e TMDB_API_KEY="your_api_key_here" \
+  --restart unless-stopped \
+  --name donggua-tv donggua-tv
+```
+
+### ▲ Vercel 部署
+适合零成本快速上线。
+*注意：部署完成后，请务必在 Vercel 控制台的 **Settings -> Environment Variables** 中添加 `TMDB_API_KEY`。*
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fednovas%2FdongguaTV)
+
+*(请确保先将本项目推送到您自己的 GitHub 仓库，点击上方按钮即可一键导入部署)*
+
+### 🖥️ Linux 服务器命令行部署 (PM2)
+适合常规 VPS (Ubuntu/CentOS/Debian)。
+
+1.  **环境准备**
     ```bash
-    npx nodemon server.js
+    # 安装 Node.js (v18+)
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    
+    # 安装 PM2 进程管理器
+    npm install -g pm2
     ```
 
-4.  **访问**
-    打开浏览器访问 `http://localhost:3000`
+2.  **获取代码与运行**
+    ```bash
+    git clone https://github.com/ednovas/dongguaTV.git
+    cd dongguaTV
+    npm install
+    
+    # 配置环境变量
+    cp .env.example .env
+    # 编辑 .env文件填入您的 TMDB_API_KEY
+    nano .env
+    
+    # 使用 PM2 启动服务
+    pm2 start server.js --name "donggua-tv"
+    
+    # 设置开机自启
+    pm2 save && pm2 startup
+    ```
+
+### 🏰 宝塔面板 (aaPanel) 部署
+可视化管理，不需要懂代码。
+
+1.  在 **软件商店** 搜索并安装 **Node.js版本管理器** (建议选择 v18+)。
+2.  在 **网站** -> **Node项目** -> **添加Node项目**。
+    *   **项目目录**：选择上传代码的文件夹 (例如 `/www/wwwroot/dongguaTV`)。
+    *   **启动选项**：`server.js`。
+    *   **项目端口**：`3000`。
+3.  **配置API Key**：
+    *   在 **文件** 栏目进入项目目录。
+    *   将 `.env.example` 重命名为 `.env`。
+    *   编辑 `.env` 文件，填入您的 `TMDB_API_KEY` 并保存。
+    *   回到 **Node项目** 列表，点击 **重启** 服务。
+4.  点击 **映射/绑定域名**，输入您的域名 (如 `movie.example.com`)。
+5.  访问域名即可使用。
 
 ## 📝 贡献与致谢
 
-本项目由 **kk爱吃王哥呆阿龟头** 设计编写。
+本项目由 **kk爱吃王哥呆阿龟头** 设计编写， **ednovas** 优化了功能和部署流程。
 数据由 **TMDb** 和各式 **Maccms** API 提供。
 
 ---
