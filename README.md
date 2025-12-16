@@ -94,6 +94,8 @@
 ## 🚀 部署 (Deployment)
 
 ### 🐳 Docker 部署 (推荐)
+
+#### 方案一：使用现有镜像（最快）
 无需构建，一行命令直接运行。
 
 ```bash
@@ -104,6 +106,45 @@ docker run -d -p 3000:3000 \
   --restart unless-stopped \
   ghcr.io/ednovas/dongguatv:latest
 ```
+
+#### 方案二：本地构建
+如果您想自己修改代码或重新构建镜像：
+
+1.  **构建镜像**
+    ```bash
+    docker build -t donggua-tv .
+    ```
+2.  **运行容器**
+    ```bash
+    docker run -d -p 3000:3000 \
+      -e TMDB_API_KEY="your_api_key_here" \
+      --name donggua-tv \
+      --restart unless-stopped \
+      donggua-tv
+    ```
+
+#### 方案三：Docker Compose
+如果您更喜欢使用 Compose 管理：
+
+1.  创建 `docker-compose.yml` 文件：
+    ```yaml
+    version: '3'
+    services:
+      donggua-tv:
+        image: ghcr.io/ednovas/dongguatv:latest
+        # get image from github registry
+        # 或者使用 build: . 本地构建
+        container_name: donggua-tv
+        ports:
+          - "3000:3000"
+        environment:
+          - TMDB_API_KEY=your_api_key_here
+        restart: unless-stopped
+    ```
+2.  **启动**
+    ```bash
+    docker-compose up -d
+    ```
 
 ### ▲ Vercel 部署
 适合零成本快速上线。
