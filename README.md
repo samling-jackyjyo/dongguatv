@@ -55,7 +55,7 @@
 *   **Data Sources**: TMDb API v3, Multiple JSON/XML CMS Interfaces.
 *   **Persistence**: Local JSON Cache.
 
-## � 前置准备：获取 TMDb API Key
+## 前置准备：获取 TMDb API Key
 本项目依赖 **The Movie Database (TMDb)** 提供影视元数据。
 
 1.  注册账户：访问 [Create Account](https://www.themoviedb.org/signup) 注册并登录。
@@ -65,7 +65,7 @@
 
 ---
 
-## �📦 安装与运行 (Installation)
+## 📦 安装与运行 (Installation)
 
 ### 本地运行
 1.  **安装依赖**
