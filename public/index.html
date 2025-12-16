@@ -1225,8 +1225,17 @@
                 </div>
 
                 <!-- 2. 中部：超大播放器 -->
-                <div class="player-box">
+                <div class="player-box" style="position: relative;">
                     <div id="dplayer" style="width: 100%; height: 100%;"></div>
+                    <!-- 自动切换线路提示 -->
+                    <div v-if="autoRetryMessage" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); 
+                               background: rgba(0,0,0,0.9); padding: 20px 30px; border-radius: 10px; 
+                               text-align: center; z-index: 100; border: 1px solid rgba(255,255,255,0.1);">
+                        <i class="fas fa-sync-alt fa-spin"
+                            style="font-size: 24px; color: #e50914; margin-bottom: 10px;"></i>
+                        <div style="color: #fff; font-weight: bold;">{{ autoRetryMessage }}</div>
+                        <div style="color: #888; font-size: 12px; margin-top: 5px;">正在自动切换...</div>
+                    </div>
                 </div>
 
                 <!-- 3. 底部：控制面板 -->
@@ -1333,6 +1342,9 @@
                     imageMap: {}, fallbackMap: {}, heroList: [], scrollY: 0,
                     hotList: [],
                     sitesMap: {},  // 缓存站点信息（用于客户端测速）
+                    playbackErrorCount: 0,  // 播放失败计数
+                    isAutoRetrying: false,  // 是否正在自动重试
+                    autoRetryMessage: '',  // 自动切换提示信息
 
                     // === 动态榜单配置 ===
                     rowLists: {}, // 存储各榜单数据 { movieRow: [...], ... }
@@ -1652,38 +1664,136 @@
                     this.currentSource = null;  // 确保清空之前的选择
                     this.episodeList = [];
 
-                    // 客户端直接测速所有源
+                    // 真实用户端测速：获取每个线路的视频URL，直接从用户端测试m3u8延迟
+                    // 这样能真正反映用户是否可以访问该视频源
+
+                    // 快速返回标志：一旦有2+快速线路，立即自动选择最快的
+                    let hasAutoSelected = false;
+                    const FAST_THRESHOLD = 600;  // 快速线路阈值 (ms)
+                    const EARLY_RETURN_COUNT = 2;  // 有几个快速线路后提前返回
+                    const MAX_WAIT_TIME = 3000;  // 最长等待时间 (ms)
+
+                    // 检查是否可以提前返回
+                    const checkEarlyReturn = () => {
+                        if (hasAutoSelected) return;
+
+                        const fastSources = this.currentGroup.sources.filter(s =>
+                            typeof s.latency === 'number' && s.latency < FAST_THRESHOLD
+                        );
+
+                        if (fastSources.length >= EARLY_RETURN_COUNT) {
+                            hasAutoSelected = true;
+                            // 按延迟排序
+                            fastSources.sort((a, b) => a.latency - b.latency);
+                            console.log(`[快速返回] 已找到 ${fastSources.length} 个快速线路，自动选择最快的: ${fastSources[0].site_name} (${fastSources[0].latency}ms)`);
+                            this.switchSource(fastSources[0]);
+                        }
+                    };
+
+                    // 超时自动选择（即使没有足够的快速线路）
+                    const earlyReturnTimer = setTimeout(() => {
+                        if (hasAutoSelected) return;
+                        hasAutoSelected = true;
+
+                        // 找到目前为止最快的可用线路
+                        const testedSources = this.currentGroup.sources.filter(s =>
+                            typeof s.latency === 'number' && s.latency < 9000
+                        );
+
+                        if (testedSources.length > 0) {
+                            testedSources.sort((a, b) => a.latency - b.latency);
+                            console.log(`[超时返回] ${MAX_WAIT_TIME}ms后自动选择: ${testedSources[0].site_name} (${testedSources[0].latency}ms)`);
+                            this.switchSource(testedSources[0]);
+                        }
+                    }, MAX_WAIT_TIME);
+
                     const latencyPromises = this.currentGroup.sources.map(async (source) => {
                         source.latency = '...';
-                        const siteInfo = this.sitesMap[source.site_key];
-                        if (!siteInfo || !siteInfo.api) {
-                            source.latency = 9999;
-                            return source;
-                        }
-
-                        const start = Date.now();
                         try {
-                            // 使用 no-cors 模式绕过跨域限制，测量客户端到站点的延迟
+                            // 1. 先获取该线路的视频详情
+                            const detailRes = await fetch(`/api/detail?site_key=${source.site_key}&id=${source.vod_id}`);
+                            const detailData = await detailRes.json();
+
+                            if (!detailData.list || detailData.list.length === 0) {
+                                source.latency = 9999;
+                                return source;
+                            }
+
+                            // 2. 解析出第一个 m3u8 视频 URL
+                            const detail = detailData.list[0];
+                            let playUrl = detail.vod_play_url || '';
+
+                            // 处理多线路格式 (用 $$$ 分隔)
+                            if (playUrl.includes('$$$')) {
+                                const sets = playUrl.split('$$$');
+                                playUrl = sets.find(s => s.toLowerCase().includes('m3u8')) || sets[0];
+                            }
+
+                            // 获取第一个视频URL
+                            const firstEp = playUrl.split('#')[0];
+                            const parts = firstEp.split('$');
+                            const videoUrl = parts.length > 1 ? parts[1] : parts[0];
+
+                            if (!videoUrl || !videoUrl.startsWith('http')) {
+                                source.latency = 9999;
+                                return source;
+                            }
+
+                            // 3. 用户端直接测试 m3u8 URL 的延迟
+                            const startTime = Date.now();
                             const controller = new AbortController();
                             const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-                            await fetch(siteInfo.api + '?ac=list&pg=1', {
-                                mode: 'no-cors',
+                            // m3u8 文件通常配置了 CORS，可以直接 fetch
+                            const testRes = await fetch(videoUrl, {
+                                method: 'GET',
                                 cache: 'no-cache',
                                 signal: controller.signal
                             });
 
                             clearTimeout(timeoutId);
-                            source.latency = Date.now() - start;
+
+                            if (testRes.ok || testRes.type === 'cors') {
+                                source.latency = Date.now() - startTime;
+                            } else {
+                                source.latency = Date.now() - startTime;
+                            }
+
+                            // 缓存详情数据，后续切换时可以复用
+                            source._cachedDetail = detail;
+
+                            // 每完成一个测速就检查是否可以提前返回
+                            checkEarlyReturn();
+
                         } catch (e) {
-                            // 超时或网络错误
-                            source.latency = 9999;
+                            // 如果是 CORS 错误，尝试 no-cors 模式再测一次
+                            if (e.name !== 'AbortError') {
+                                try {
+                                    const detailRes = await fetch(`/api/detail?site_key=${source.site_key}&id=${source.vod_id}`);
+                                    const detailData = await detailRes.json();
+                                    if (detailData.list && detailData.list.length > 0) {
+                                        source._cachedDetail = detailData.list[0];
+                                        // 无法直接测试，回退到服务器端延迟
+                                        const checkRes = await fetch(`/api/check?key=${source.site_key}`);
+                                        const checkData = await checkRes.json();
+                                        source.latency = checkData.latency;
+                                        checkEarlyReturn();
+                                    } else {
+                                        source.latency = 9999;
+                                    }
+                                } catch (e2) {
+                                    source.latency = 9999;
+                                }
+                            } else {
+                                source.latency = 9999;  // 超时
+                            }
                         }
                         return source;
                     });
 
-                    // 等待所有测速完成
+                    // 等待所有测速完成（后台继续）
                     await Promise.all(latencyPromises);
+                    clearTimeout(earlyReturnTimer);
                     this.isTestingSources = false;  // 测速完成
 
                     // 按延迟排序 (低到高)
@@ -1693,20 +1803,19 @@
                         return latA - latB;
                     });
 
-                    // 优先从快速线路中选择 (延迟 < 600ms)
-                    let available = this.currentGroup.sources.filter(s =>
-                        typeof s.latency === 'number' && s.latency < 600
-                    );
-                    // 如果没有快速线路，则从慢速线路中选择
-                    if (available.length === 0) {
-                        available = this.currentGroup.sources.filter(s =>
-                            typeof s.latency === 'number' && s.latency >= 600 && s.latency < 9000
+                    // 如果还没有自动选择，现在选择
+                    if (!hasAutoSelected) {
+                        let available = this.currentGroup.sources.filter(s =>
+                            typeof s.latency === 'number' && s.latency < FAST_THRESHOLD
                         );
-                    }
-
-                    // 如果有可用源，自动选择延迟最低的那一个
-                    if (available.length > 0) {
-                        this.switchSource(available[0]);
+                        if (available.length === 0) {
+                            available = this.currentGroup.sources.filter(s =>
+                                typeof s.latency === 'number' && s.latency >= FAST_THRESHOLD && s.latency < 9000
+                            );
+                        }
+                        if (available.length > 0) {
+                            this.switchSource(available[0]);
+                        }
                     }
                     // 如果全部不可用，不自动选择，UI会显示提示
                 },
@@ -1715,11 +1824,21 @@
                     this.currentSource = source;
                     this.loadingDetail = true;
                     this.episodeList = [];
+
                     try {
-                        const res = await fetch(`/api/detail?site_key=${source.site_key}&id=${source.vod_id}`);
-                        const data = await res.json();
-                        if (data.list && data.list.length > 0) {
-                            const detail = data.list[0];
+                        // 优先使用测速时缓存的详情数据
+                        let detail = source._cachedDetail;
+
+                        if (!detail) {
+                            // 如果没有缓存，重新获取
+                            const res = await fetch(`/api/detail?site_key=${source.site_key}&id=${source.vod_id}`);
+                            const data = await res.json();
+                            if (data.list && data.list.length > 0) {
+                                detail = data.list[0];
+                            }
+                        }
+
+                        if (detail) {
                             // 保存简介信息到当前源
                             this.currentSource.vod_content = detail.vod_content || detail.vod_blurb || '';
                             this.parseEpisodes(detail.vod_play_url);
@@ -1741,6 +1860,22 @@
                 },
                 play(url) {
                     this.currentUrl = url;
+                    this.playbackErrorCount = 0;  // 重置错误计数
+
+                    const setupErrorHandling = () => {
+                        // 监听播放错误，自动切换到下一个可用线路
+                        dp.on('error', () => {
+                            this.handlePlaybackError();
+                        });
+
+                        // 监听 HLS 错误
+                        if (dp.video) {
+                            dp.video.addEventListener('error', () => {
+                                this.handlePlaybackError();
+                            });
+                        }
+                    };
+
                     if (!dp) {
                         dp = new DPlayer({
                             container: document.getElementById('dplayer'),
@@ -1750,22 +1885,62 @@
 
                         // 添加全屏横屏功能（手机端）
                         dp.on('fullscreen', () => {
-                            // 尝试锁定横屏
                             if (screen.orientation && screen.orientation.lock) {
                                 screen.orientation.lock('landscape').catch(() => { });
                             }
                         });
 
                         dp.on('fullscreen_cancel', () => {
-                            // 解锁屏幕方向
                             if (screen.orientation && screen.orientation.unlock) {
                                 screen.orientation.unlock();
                             }
                         });
+
+                        setupErrorHandling();
                     } else {
                         dp.switchVideo({ url: url, type: 'hls' });
                     }
                     dp.play();
+                },
+
+                // 处理播放错误，自动切换线路
+                handlePlaybackError() {
+                    this.playbackErrorCount++;
+
+                    // 避免重复触发
+                    if (this.isAutoRetrying || this.playbackErrorCount > 1) return;
+
+                    // 获取当前线路索引
+                    const allSources = this.availableSources;
+                    const currentIndex = allSources.findIndex(s => s.site_key === this.currentSource?.site_key);
+
+                    // 如果还有下一个线路可用，自动切换
+                    if (currentIndex >= 0 && currentIndex < allSources.length - 1) {
+                        this.isAutoRetrying = true;
+                        const nextSource = allSources[currentIndex + 1];
+
+                        // 显示用户提示
+                        this.autoRetryMessage = `${this.currentSource?.site_name} 播放失败，正在尝试 ${nextSource.site_name}`;
+                        console.log(`[Auto-Failover] ${this.autoRetryMessage}`);
+
+                        // 标记当前线路为不可用（设置高延迟）
+                        if (this.currentSource) {
+                            this.currentSource.latency = 9998;  // 标记为用户端不可用
+                        }
+
+                        // 切换到下一个线路
+                        setTimeout(() => {
+                            this.autoRetryMessage = '';  // 清除提示
+                            this.isAutoRetrying = false;
+                            this.switchSource(nextSource);
+                        }, 1500);  // 显示提示1.5秒后切换
+                    } else {
+                        // 没有更多可用线路
+                        this.autoRetryMessage = '所有线路均无法播放';
+                        setTimeout(() => {
+                            this.autoRetryMessage = '';
+                        }, 3000);
+                    }
                 }
             }
         }).mount('#app');
