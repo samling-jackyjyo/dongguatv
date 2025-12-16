@@ -959,10 +959,77 @@
                 justify-content: center;
             }
         }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Loading Screen */
+        .app-loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #0a0a0a;
+            /* Deep dark background */
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.6s ease-out, visibility 0.6s;
+        }
+
+        .app-loader.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .loader-logo {
+            font-size: 3rem;
+            font-weight: 800;
+            background: linear-gradient(45deg, #e50914, #ff5151);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 30px;
+            letter-spacing: 2px;
+            animation: pulse 2s infinite;
+        }
+
+        .loader-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #e50914;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        ``` @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.8;
+            }
+        }
     </style>
 </head>
 
 <body>
+    <!-- Initial Loading Screen (Buffer) -->
+    <div id="app-loader" class="app-loader">
+        <div class="loader-logo">冬瓜TV <span
+                style="font-size:1.2rem; -webkit-text-fill-color: #fff; opacity:0.8;">MAX</span></div>
+        <div class="loader-spinner"></div>
+    </div>
 
     <div id="app">
 
@@ -1320,6 +1387,12 @@
                     console.warn('TMDB_API_KEY 未配置');
                     // 可以在界面上显示一个提示
                 }
+
+                // 3. 移除 Loading 遮罩 (平滑过渡)
+                setTimeout(() => {
+                    const loader = document.getElementById('app-loader');
+                    if (loader) loader.classList.add('hidden');
+                }, 800);
             },
             computed: {
                 groupedList() {

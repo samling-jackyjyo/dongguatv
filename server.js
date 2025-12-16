@@ -8,7 +8,7 @@ const path = require('path');
 const NodeCache = require('node-cache');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const DATA_FILE = path.join(__dirname, 'db.json');
 const CACHE_SEARCH_FILE = path.join(__dirname, 'cache_search.json');
 const CACHE_DETAIL_FILE = path.join(__dirname, 'cache_detail.json');
