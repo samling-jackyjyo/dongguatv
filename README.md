@@ -107,7 +107,7 @@ docker run -d -p 3000:3000 \
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fednovas%2FdongguaTV)
 
-*(请确保先将本项目推送到您自己的 GitHub 仓库，点击上方按钮即可一键导入部署)*
+*(请确保先将本项目fork到您自己的 GitHub 仓库，点击上方按钮即可一键导入部署)*
 
 ### 🖥️ Linux 服务器命令行部署 (PM2)
 适合常规 VPS (Ubuntu/CentOS/Debian)。
