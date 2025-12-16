@@ -94,17 +94,15 @@
 ## 🚀 部署 (Deployment)
 
 ### 🐳 Docker 部署 (推荐)
-Docker 部署支持完整的本地缓存功能，性能最佳。
+无需构建，一行命令直接运行。
 
 ```bash
-# 1. 构建镜像
-docker build -t donggua-tv .
-
-# 2. 启动容器 (后台运行)，需传入 API Key
+# 启动容器 (请替换 TMDB_API_KEY)
 docker run -d -p 3000:3000 \
   -e TMDB_API_KEY="your_api_key_here" \
+  --name donggua-tv \
   --restart unless-stopped \
-  --name donggua-tv donggua-tv
+  ghcr.io/ednovas/dongguatv:latest
 ```
 
 ### ▲ Vercel 部署
